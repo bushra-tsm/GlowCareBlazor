@@ -1,0 +1,52 @@
+﻿@page "/order-success"
+@rendermode InteractiveServer
+@using GlowCareWeb.Models
+@using Microsoft.EntityFrameworkCore
+@inject GlowCareDbContext db
+@inject GlowCareWeb.Services.NotificationService NotificationService
+@inject NavigationManager NavM
+
+
+<h3>Processing your order...</h3>
+
+<button @onclick='() => NotificationService.Success("Test toast")'>Test Toast</button>
+
+@code {
+    [Parameter, SupplyParameterFromQuery(Name = "sessionId")]
+    public string SessionId { get; set; } = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Creating stripe service object to communicate with stripe
+        var sessionService = new Stripe.Checkout.SessionService();
+
+        // received payment info for this sessionId from stripe
+        var session = await sessionService.GetAsync(SessionId);
+
+        if (session.PaymentStatus == "paid")
+        {
+            var cart = await db.Carts
+                .Include(c => c.CartItems)
+                .ThenInclude(ci => ci.Product)
+                .FirstOrDefaultAsync(c => c.CartId == int.Parse(session.Metadata["cartId"]));
+
+            if (cart != null && cart.Status == "Active")
+            {
+                foreach (var item in cart.CartItems)
+                {
+                    item.Product.Stock -= item.Quantity;
+                    if (item.Product.Stock <= 0) item.Product.IsActive = false;
+                }
+
+                cart.Status = "Pending";
+                cart.PaymentIntentId = session.PaymentIntentId;
+                cart.AmountPaid = session.AmountTotal / 100m;
+                cart.PaymentDate = DateTime.Now;
+
+                await db.SaveChangesAsync();
+            }
+        }
+
+        NavM.NavigateTo("/cart?msg=Payment successful! Order placed.&type=success");
+    }
+}

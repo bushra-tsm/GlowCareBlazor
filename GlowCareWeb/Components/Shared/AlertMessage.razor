@@ -1,0 +1,89 @@
+﻿@implements IDisposable
+@inject GlowCareWeb.Services.NotificationService NotificationService
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JSRuntime
+@rendermode InteractiveServer
+@if (Visible)
+{
+    <div class="position-fixed top-0 end-0 p-3" style="z-index:9999; width:350px;">
+        <div class="alert @AlertClass alert-dismissible fade show shadow">
+            @Message
+            <button class="btn-close" @onclick="Close"></button>
+        </div>
+    </div>
+}
+@code {
+    private bool Visible;
+    private string Message = "";
+    private string AlertClass = "alert-success";
+    private CancellationTokenSource? _cts;
+    private bool _flashHandled;
+
+    protected override void OnInitialized()
+    {
+        NotificationService.OnShow += Show;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_flashHandled)
+        {
+            _flashHandled = true;
+
+            var uri = new Uri(NavigationManager.Uri);
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            var msg = query["msg"];
+            var type = query["type"];
+
+            if (!string.IsNullOrEmpty(msg))
+            {
+                var css = type switch
+                {
+                    "success" => "alert-success",
+                    "error" => "alert-danger",
+                    "warning" => "alert-warning",
+                    _ => "alert-info"
+                };
+
+                // Clean the URL FIRST so a refresh/relogin doesn't replay it
+                var cleanUrl = uri.GetLeftPart(UriPartial.Path);
+                await JSRuntime.InvokeVoidAsync("history.replaceState", null, "", cleanUrl);
+
+                await ShowAsync(msg, css, 3000);
+            }
+        }
+    }
+
+    private void Show(string message, string css, int duration)
+    {
+        _ = ShowAsync(message, css, duration);
+    }
+
+    private async Task ShowAsync(string message, string css, int duration)
+    {
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+        var token = _cts.Token;
+        try
+        {
+            Message = message;
+            AlertClass = css;
+            Visible = true;
+            await InvokeAsync(StateHasChanged);
+            await Task.Delay(duration, token);
+            Visible = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    void Close() => Visible = false;
+
+    public void Dispose()
+    {
+        NotificationService.OnShow -= Show;
+        _cts?.Cancel();
+        _cts?.Dispose();
+    }
+}

@@ -1,0 +1,312 @@
+﻿@page "/cart"
+@rendermode InteractiveServer
+
+@using GlowCareWeb.Models
+@using Microsoft.EntityFrameworkCore
+@using System.Security.Claims
+@inject NavigationManager NavM
+
+@inject GlowCareDbContext db
+@inject GlowCareWeb.Services.NotificationService NotificationService
+
+
+    <h3>My Shopping Cart</h3>
+    <hr />
+
+    @if (cartItems.Count == 0)
+    {
+        <div class="alert alert-info">
+            Your cart is empty.
+        </div>
+    }
+    else
+    {
+        <table class="table table-bordered table-striped">
+
+            <thead class="table-dark">
+                <tr>
+
+                    <th>Image</th>
+                    <th>Product</th>
+                    <th>Unit Price</th>
+                    <th width="180">Quantity</th>
+                    <th>Total</th>
+                    <th>Action</th>
+
+                </tr>
+            </thead>
+
+            <tbody>
+
+                @foreach (var item in cartItems)
+                {
+                    <tr>
+
+                        <td>
+                            <img src="/@item.Product.PhotoPath"
+                                 width="80"
+                                 class="img-thumbnail" />
+                        </td>
+
+                        <td>
+                            @item.Product.ProductName
+                        </td>
+
+                        <td>
+                            @item.UnitPrice
+                        </td>
+
+                        <td>
+
+                            <button class="btn btn-danger btn-sm"
+                                    @onclick="() => Decrease(item)">
+                                -
+                            </button>
+
+                            <span class="mx-3 fw-bold">
+                                @item.Quantity
+                            </span>
+
+                            <button class="btn btn-success btn-sm"
+                                    @onclick="() => Increase(item)">
+                                +
+                            </button>
+
+                        </td>
+
+                        <td>
+                            @(item.Quantity* item.UnitPrice)
+                        </td>
+
+                        <td>
+
+                            <button class="btn btn-danger btn-sm"
+                                    @onclick="() => Remove(item)">
+                                Remove
+                            </button>
+                        </td>
+
+                    </tr>
+                }
+            </tbody>
+
+        </table>
+
+        <div class="text-end">
+
+            <h4>
+                Grand Total :
+                @cartItems.Sum(x => x.Quantity * x.UnitPrice)
+            </h4>
+
+            <button class="btn btn-success mt-2" @onclick="PlaceOrder">
+                Place Order
+            </button>
+
+        </div>
+    }
+
+    <hr />
+    <h4>My Orders</h4>
+
+    @if (myOrders.Count == 0)
+    {
+        <p class="text-muted">No orders placed yet.</p>
+    }
+    else
+    {
+        @foreach (var order in myOrders)
+        {
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between">
+                    <span>Order #@order.CartId</span>
+                    <span class="badge @(order.Status switch
+                          {
+                              "Pending" => "bg-secondary",
+                              "Processing" => "bg-warning text-dark",
+                              "Completed" => "bg-success",
+                              _ => "bg-secondary"
+                          })">
+                @order.Status
+            </span>
+        </div>
+        <div class="card-body">
+            @foreach (var item in order.CartItems)
+                    {
+                        <div>@item.Product.ProductName x @item.Quantity — @(item.Quantity* item.UnitPrice)</div>
+                    }
+                </div>
+                <hr />
+
+                <div class="text-end">
+                    <strong>Order Total: @order.CartItems.Sum(x => x.Quantity * x.UnitPrice)</strong>
+                </div>
+            </div>
+        }
+    }
+
+
+
+@code
+{
+    [CascadingParameter]
+    private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+    List<CartItem> cartItems = new();
+    List<Cart> myOrders = new();
+
+    string userId = "";
+
+
+
+   
+
+
+    async Task PlaceOrder()
+    {
+        var cart = await db.Carts
+            .Include(c => c.CartItems)
+            .ThenInclude(ci => ci.Product)
+            .FirstOrDefaultAsync(x => x.UserId == userId && x.Status == "Active");
+
+        if (cart == null || !cart.CartItems.Any())
+        {
+            NotificationService.Warning("Your cart is empty");
+            return;
+        }
+
+        // Re-validate stock before payment
+        foreach (var item in cart.CartItems)
+        {
+            if (item.Quantity > item.Product.Stock)
+            {
+                NotificationService.Error($"{item.Product.ProductName} only has {item.Product.Stock} left in stock.");
+                return;
+            }
+        }
+
+        // Build Stripe line items from cart items
+        var lineItems = cart.CartItems.Select(item => new Stripe.Checkout.SessionLineItemOptions
+        {
+            PriceData = new Stripe.Checkout.SessionLineItemPriceDataOptions
+            {
+                UnitAmount = (long)(item.UnitPrice * 100), // Stripe uses cents, not dollars
+                Currency = "usd",
+                ProductData = new Stripe.Checkout.SessionLineItemPriceDataProductDataOptions
+                {
+                    Name = item.Product.ProductName
+                }
+            },
+            Quantity = item.Quantity
+        }).ToList();
+
+        var options = new Stripe.Checkout.SessionCreateOptions
+        {
+            PaymentMethodTypes = new List<string> { "card" },
+            LineItems = lineItems,
+            Mode = "payment",
+            SuccessUrl = NavM.BaseUri + "order-success?sessionId={CHECKOUT_SESSION_ID}",
+            CancelUrl = NavM.BaseUri + "order-cancelled",
+            Metadata = new Dictionary<string, string>
+    {
+        { "cartId", cart.CartId.ToString() }
+    }
+        };
+
+        var service = new Stripe.Checkout.SessionService();
+        var session = await service.CreateAsync(options);
+
+        NavM.NavigateTo(session.Url, forceLoad: true);
+    }
+
+
+
+    async Task Increase(CartItem item)
+    {
+        if (item.Quantity + 1 > item.Product.Stock)
+        {
+            NotificationService.Warning($"Only {item.Product.Stock} in stock for {item.Product.ProductName}.");
+            return;
+        }
+
+        item.Quantity++;
+
+        await db.SaveChangesAsync();
+        NotificationService.Info("Added Item");
+
+        await LoadCart();
+    }
+
+    async Task Decrease(CartItem item)
+    {
+        if (item.Quantity > 1)
+        {
+            item.Quantity--;
+
+            await db.SaveChangesAsync();
+            NotificationService.Warning("Removed Item");
+        }
+        else
+        {
+            db.CartItems.Remove(item);
+
+            await db.SaveChangesAsync();
+            NotificationService.Error("Item Deleted");
+
+        }
+
+        await LoadCart();
+    }
+
+    async Task Remove(CartItem item)
+    {
+        db.CartItems.Remove(item);
+
+        await db.SaveChangesAsync();
+        NotificationService.Error("Item Deleted");
+
+        await LoadCart();
+    }
+
+
+    async Task LoadMyOrders()
+    {
+        myOrders = await db.Carts
+            .Include(c => c.CartItems)
+            .ThenInclude(ci => ci.Product)
+            .Where(c => c.UserId == userId && c.Status != "Active")
+            .ToListAsync();
+    }
+
+    async Task LoadCart()
+    {
+        var cart = await db.Carts
+
+            .Include(x => x.CartItems)
+            .ThenInclude(x => x.Product)
+
+            .FirstOrDefaultAsync(x =>
+                x.UserId == userId &&
+                x.Status == "Active");
+
+        if (cart != null)
+            cartItems = cart.CartItems.ToList();
+    }
+
+
+   
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await AuthenticationStateTask).User;
+
+
+        if (!user.Identity!.IsAuthenticated)
+            return;
+
+        userId = user.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+        await LoadCart();
+        await LoadMyOrders();
+    }
+}

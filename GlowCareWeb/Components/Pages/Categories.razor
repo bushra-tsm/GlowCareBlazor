@@ -1,0 +1,132 @@
+﻿@page "/category"
+@attribute [Authorize(Roles = "Admin")]
+@inject GlowCareDbContext db
+@inject IJSRuntime JsRuntime
+@inject GlowCareWeb.Services.NotificationService NotificationService
+
+@rendermode InteractiveServer
+
+@using GlowCareWeb.Models
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.EntityFrameworkCore
+
+
+<h3 style="text-align:center">Category Manage</h3>
+<h4>Add Category</h4>
+<EditForm Model="Addcategory" OnValidSubmit="AddCategories" FormName="Addcategory">
+    <DataAnnotationsValidator></DataAnnotationsValidator>
+    <ValidationSummary></ValidationSummary>
+    <label>Enter Category</label>
+    <InputText @bind-Value="Addcategory.CategoryName" class="form-control"></InputText>
+    <br />
+    <button type="submit" class="btn btn-primary">Add New Category</button>
+</EditForm>
+<br />
+<br />
+<table class="table table-striped table-bordered">
+    <thead>
+        <tr>
+            <th>SL</th>
+            <th>Category</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        @{
+            int serial = 1;
+        }
+        @foreach(var item in categories)
+        {
+            <tr>
+                <td>@serial</td>
+                <td>@item.CategoryName</td>
+                <td>
+                    <button class="btn btn-primary" @onclick="()=>EditCategory(item)">Edit</button>
+                    <button class="btn btn-danger" @onclick="() => DeleteCategory(item.CategoryId)">Delete</button>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@if (IsEdit)
+{
+    <h4>Update Category</h4>
+    <EditForm Model="Editcategory" OnValidSubmit="UpdateCategories" FormName="Updatecategory">
+        <DataAnnotationsValidator></DataAnnotationsValidator>
+        <ValidationSummary></ValidationSummary>
+        <label>Enter Category</label>
+        <InputText @bind-Value="Editcategory.CategoryName" class="form-control"></InputText>
+        <br />
+        <button type="submit" class="btn btn-primary">Update Category</button>
+    </EditForm>
+}
+
+@code {
+    List<Category> categories = new();
+    Category Addcategory = new();
+    Category Editcategory = new();
+    bool IsEdit = false;
+
+
+    public void ConfirmDelete(int id)
+    {
+        var c = db.Categories.Find(id);
+        if (c != null)
+        {
+            db.Categories.Remove(c);
+            db.SaveChanges();
+            NotificationService.Warning("Record deleted");
+            categories =  db.Categories.ToList();
+        }
+
+    }
+    public async Task DeleteCategory(int id)
+    {
+        
+         bool confirmed = await JsRuntime.InvokeAsync<bool>("confirm", "Are you sure you want to delete this item?");
+        
+        if (confirmed)
+        {
+            ConfirmDelete(id);
+        }
+    }
+    public async Task UpdateCategories()
+    {
+        var c = db.Categories.Find(Editcategory.CategoryId);
+        if (c!= null)
+        {
+             c.CategoryId = Editcategory.CategoryId;
+            c.CategoryName= Editcategory.CategoryName;
+            db.SaveChanges();
+            NotificationService.Info("Updated Successfully");
+            Editcategory = new();
+            IsEdit = false;
+            categories = await db.Categories.ToListAsync();
+
+        }
+    }
+    public void EditCategory(Category category)
+    {
+        Editcategory = new()
+            {
+                CategoryId = category.CategoryId,
+                CategoryName = category.CategoryName
+            };
+        IsEdit = true;
+
+    }
+    public async Task AddCategories()
+    {
+        db.Categories.Add(Addcategory);
+        db.SaveChanges();
+        NotificationService.Success("Added successfully");
+        Addcategory = new();
+        categories = await db.Categories.ToListAsync();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        categories =await db.Categories.ToListAsync(); 
+    }
+}

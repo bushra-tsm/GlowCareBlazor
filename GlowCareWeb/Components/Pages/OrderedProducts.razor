@@ -1,0 +1,97 @@
+﻿@page "/admin/orders"
+@attribute [Authorize(Roles = "Admin")]
+@rendermode InteractiveServer
+@using GlowCareWeb.Data
+@using GlowCareWeb.Models
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@inject GlowCareDbContext db
+@inject GlowCareWeb.Services.NotificationService NotificationService
+@inject UserManager<ApplicationUser> UserManager
+
+
+<h3 class="text-center">Manage Orders</h3>
+<hr />
+
+@foreach (var cart in orders)
+{
+    <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><strong>Order #@cart.CartId</strong> — User: @userNames.GetValueOrDefault(cart.UserId, "Unknown User")</span>
+
+            <select class="form-select" style="width:180px"
+                    value="@cart.Status"
+                    @onchange="(e) => UpdateOrderStatus(cart, e.Value!.ToString()!)">
+                <option value="Pending">Pending</option>
+                <option value="Processing">Processing</option>
+                <option value="Completed">Completed</option>
+            </select>
+        </div>
+
+        <div class="card-body">
+            @foreach (var item in cart.CartItems)
+            {
+                <div>@item.Product.ProductName x @item.Quantity — @(item.Quantity* item.UnitPrice)</div>
+            }
+
+            <hr />
+
+            <div>
+                <strong>Amount Paid:</strong> @(cart.AmountPaid?.ToString("C") ?? "Not confirmed")
+            </div>
+            <div>
+                <strong>Payment Date:</strong> @(cart.PaymentDate?.ToString("dd MMM yyyy, hh:mm tt") ?? "N/A")
+            </div>
+            <div>
+                <strong>Payment Ref:</strong> @(cart.PaymentIntentId ?? "N/A")
+            </div>
+
+            <span class="badge @(cart.AmountPaid != null ? "bg-success" : "bg-secondary")">
+                @(cart.AmountPaid != null ? "Paid" : "Payment Unconfirmed")
+            </span>
+
+            <div class="text-end mt-2">
+                <strong>Order Total: @cart.CartItems.Sum(x => x.Quantity * x.UnitPrice)</strong>
+            </div>
+        </div>
+    </div>
+}
+
+`   
+
+@code {
+    List<Cart> orders = new();
+    Dictionary<string, string> userNames = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadOrders();
+    }
+
+    async Task LoadOrders()
+    {
+        orders = await db.Carts
+            .Include(c => c.CartItems)
+            .ThenInclude(ci => ci.Product)
+            .Where(c => c.Status != "Active")
+            .ToListAsync();
+
+        userNames.Clear();
+
+        foreach (var userId in orders.Select(o => o.UserId).Distinct())
+        {
+            var user = await UserManager.FindByIdAsync(userId);
+            userNames[userId] = user?.Email ?? user?.UserName ?? "Unknown User";
+        }
+    }
+
+
+    async Task UpdateOrderStatus(Cart cart, string newStatus)
+    {
+        cart.Status = newStatus;
+        await db.SaveChangesAsync();
+        NotificationService.Success($"Order #{cart.CartId} marked as {newStatus}");
+        await LoadOrders();
+    }
+}

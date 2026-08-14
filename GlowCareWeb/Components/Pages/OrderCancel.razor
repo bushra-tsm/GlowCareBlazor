@@ -1,0 +1,11 @@
+﻿@page "/order-cancelled"
+@inject NavigationManager Navigation
+@inject GlowCareWeb.Services.NotificationService NotificationService
+
+@code {
+    protected override void OnInitialized()
+    {
+        NotificationService.Warning("Payment was cancelled. Your cart is still saved.");
+        Navigation.NavigateTo("/cart");
+    }
+}
