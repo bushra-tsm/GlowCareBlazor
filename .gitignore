@@ -1,0 +1,6 @@
+GlowCareWeb/appsettings.json
+GlowCareWeb/appsettings.Development.json
+GlowCareWeb/bin/
+GlowCareWeb/obj/
+.vscode/
+.vs/
